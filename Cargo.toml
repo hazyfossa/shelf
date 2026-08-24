@@ -1,0 +1,11 @@
+[package]
+name = "shelf"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+argh = { version = "0.1.19", default-features = false, features = ["help"] }
+envy = { version = "0.1.0", path = "../envy" }
+eyre = "0.6.14"
+hazymacros = { version = "0.1.0", path = "../hazymacros" }
+strum = { version = "0.28.0", features = ["derive"] }
