@@ -2,13 +2,16 @@ use std::{collections::HashSet, env, fs, path::PathBuf};
 
 use argh::FromArgs;
 use chumsky::Parser;
-use eyre::{Context, Result, bail};
+use eyre::{Context, Result};
 use strum::EnumString;
 use wincode::{SchemaRead, SchemaWrite};
+
+use crate::utils::{WarnExt, xdg_dir};
 
 hazymacros::setup!();
 
 mod parser;
+mod utils;
 
 type ShellCode = String;
 type Executable = String;
@@ -71,38 +74,45 @@ struct State {
 
 #[derive(FromArgs)]
 #[rustfmt::skip]
-/// Shelf - Useful for keeping shells in order
+/// TODO
 struct InitArgs {
     /// disables interactivity guards, even if the shell supports them
     #[argh(switch)] even_inside_scripts: bool,
 
     /// disables internal caching
     #[argh(switch)] no_cache: bool,
-
-    /// path to config
-    #[argh(option)] config: Option<PathBuf>,
 }
 
-fn default_config_path() -> Result<PathBuf> {
-    let home = env::home_dir().expect("Cannot locate HOME");
-    let dot_config = match env::var("XDG_CONFIG") {
-        Ok(x) => PathBuf::from(x),
-        Err(env::VarError::NotPresent) => home.join(".config"),
-        Err(other) => bail!(other),
-    };
+#[derive(FromArgs)]
+#[rustfmt::skip]
+/// Shelf - Useful for keeping shells in order
+struct Args {
+    /// path to config
+    #[argh(option)] config: Option<PathBuf>,
 
-    Ok(dot_config.join("config.shelf"))
+    /// path to cached state
+    #[argh(option)] cache: Option<PathBuf>,
+}
+
+fn load_config_dir(path: Option<PathBuf>) -> Result<Vec<Entry>> {
+    let path = path.unwrap_or_else(|| xdg_dir("XDG_CONFIG", ".config").join("shelf.d"));
+
+    let entries = fs::read_dir(path)?
+        .filter_map(|file_entry| {
+            let path = file_entry.warn()?.path();
+            let content = fs::read_to_string(path).warn()?;
+            let new_entries = parser::parser().parse(&content).unwrap(); // TODO
+            Some(new_entries)
+        })
+        .flatten()
+        .collect();
+
+    Ok(entries)
 }
 
 fn main() -> Result<()> {
-    let args: InitArgs = argh::from_env();
-    let config_path = args.config.unwrap_or(default_config_path()?);
-
-    let config = fs::read_to_string(&config_path)
-        .with_context(|| format!("Failed to read config from {config_path:?}"))?;
-
-    // TODO: proper parsing errors
-    let entries = parser::parser().parse(&config).unwrap();
+    let args: Args = argh::from_env();
+    let apps = load_config_dir(args.config)?;
 
     Ok(())
 }
