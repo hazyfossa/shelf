@@ -48,6 +48,16 @@ pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Entry>, extra::Err<Rich<'a, 
         .then_ignore(just('}'))
         .map(|s: &str| s.trim().to_string());
 
+    let args_list = just('(')
+        .ignore_then(
+            none_of(')')
+                .repeated()
+                .to_slice()
+                .map(|s: &str| s.trim().to_string()),
+        )
+        .then_ignore(just(')'))
+        .or_not();
+
     let alias_target = text::ascii::keyword("is")
         .padded()
         .ignore_then(ident.clone())
@@ -75,10 +85,29 @@ pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Entry>, extra::Err<Rich<'a, 
 
     let entry = just('@')
         .padded()
-        .ignore_then(ident)
+        .ignore_then(ident.clone())
+        .padded()
+        .then(args_list)
         .padded()
         .then(target)
-        .map(|(executable, target)| Entry { executable, target });
+        // TODO: rethink syntax so this is not needed
+        .try_map(|((executable, args), mut target), span| {
+            // Inject parsed arguments into the Alias target if they exist
+            if let Some(a) = args {
+                if let Target::Alias {
+                    args: target_args, ..
+                } = &mut target
+                {
+                    *target_args = Some(a);
+                } else {
+                    return Err(Rich::custom(
+                        span,
+                        "Arguments in parentheses are only allowed for 'is' (alias) targets",
+                    ));
+                }
+            }
+            Ok(Entry { executable, target })
+        });
 
     text::whitespace()
         .ignore_then(entry.padded().repeated().collect())
