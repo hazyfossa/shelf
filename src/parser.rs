@@ -21,11 +21,19 @@ pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Entry>> {
         .to_slice()
         .map(str::to_string);
 
-    let interface_target = text::keyword("implements")
+    let alias_target = text::keyword("is")
         .ignore_then(ws.clone())
         .ignore_then(ident.clone())
-        .map(|ident| ident.parse().map(Target::Interface))
-        .unwrapped();
+        .map(|ident| Target::Alias(ident));
+
+    let eval_target = text::keyword("eval")
+        .ignore_then(just('{'))
+        .ignore_then(code_block)
+        .then_ignore(just('}'))
+        .map(|template| Target::EvalOutput {
+            template,
+            cache: false, // TODO
+        });
 
     let code_target = text::keyword("via")
         .ignore_then(ws.clone())
@@ -41,8 +49,12 @@ pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Entry>> {
         })
         .unwrapped();
 
-    // Target: `implements <interface>`  OR  `via <shell> { <code> }`
-    let target = interface_target.rewind().or(code_target);
+    // Target: `is <alias>`  OR `eval { <command> }` OR  `via <shell> { <code> }`
+    let target = alias_target
+        .rewind()
+        .or(eval_target)
+        .rewind()
+        .or(code_target);
 
     // Entry: `@ <executable> <target>`
     let entry = just('@')

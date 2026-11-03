@@ -5,10 +5,7 @@ edition = "2024"
 
 [dependencies]
 argh = { version = "0.1.19", default-features = false, features = ["help"] }
-ariadne = "0.6.0"
 chumsky = "0.13"
-envy = { version = "0.1.0", path = "../envy" }
 eyre = "0.6.14"
-hazymacros = { version = "0.1.0", path = "../hazymacros" }
 strum = { version = "0.28.0", features = ["derive"] }
-wincode = { version = "0.6.1", features = ["derive"] }
+which = "8.0.6"
