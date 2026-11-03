@@ -83,9 +83,8 @@ pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Entry>, extra::Err<Rich<'a, 
 
     let target = choice((alias_target, eval_target, code_target));
 
-    let entry = just('@')
-        .padded()
-        .ignore_then(ident.clone())
+    let entry = ident
+        .clone()
         .padded()
         .then(args_list)
         .padded()
@@ -137,7 +136,7 @@ mod tests {
 
     #[test]
     fn test_single_alias_entry() {
-        let input = "@ eza is ls";
+        let input = "eza is ls";
         let result = parse(input);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].executable, "eza");
@@ -152,7 +151,7 @@ mod tests {
 
     #[test]
     fn test_single_eval_entry() {
-        let input = "@ mycmd eval { echo \"hello\" }";
+        let input = "mycmd eval { echo \"hello\" }";
         let result = parse(input);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].executable, "mycmd");
@@ -167,7 +166,7 @@ mod tests {
 
     #[test]
     fn test_single_code_entry() {
-        let input = "@ runner via bash { ls -la }";
+        let input = "runner via bash { ls -la }";
         let result = parse(input);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].executable, "runner");
@@ -183,9 +182,9 @@ mod tests {
     #[test]
     fn test_multiple_entries() {
         let input = r#"
-            @ cmd1 is alias1
-            @ cmd2 eval{echo "test"}
-            @ cmd3 via bash { pwd }
+            cmd1 is alias1
+            cmd2 eval{echo "test"}
+            cmd3 via bash { pwd }
         "#;
         let result = parse(input);
         assert_eq!(result.len(), 3);
@@ -220,10 +219,10 @@ mod tests {
 
     #[test]
     fn test_invalid_unclosed_braces() {
-        let input_eval = "@ cmd eval{echo \"hello\""; // Missing '}'
+        let input_eval = "cmd eval{echo \"hello\""; // Missing '}'
         assert!(parser().parse(input_eval).has_errors());
 
-        let input_code = "@ cmd via bash { echo \"hello\""; // Missing '}'
+        let input_code = "cmd via bash { echo \"hello\""; // Missing '}'
         assert!(parser().parse(input_code).has_errors());
     }
 }

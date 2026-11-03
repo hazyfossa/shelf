@@ -31,7 +31,7 @@ enum Shell {
 impl Shell {
     fn alias(&self, from: &str, to: &str) {
         match self {
-            Self::Fish => println!("alias {from}={to}"),
+            Self::Fish => println!("alias {from}=\"{to}\""),
             _ => todo!(),
         }
     }
