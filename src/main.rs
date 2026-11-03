@@ -17,34 +17,37 @@ mod utils;
 
 type Executable = String;
 
-#[derive(EnumString, Display, PartialEq)]
+#[derive(Debug, EnumString, Display, PartialEq)]
 #[strum(serialize_all = "lowercase")]
 enum Shell {
-    // Bash,
-    // Elvish,
+    Bash,
+    Elvish,
     Fish,
     // Nushell,
-    // Xonsh,
-    // Zsh,
+    Xonsh,
+    Zsh,
 }
 
 impl Shell {
     fn alias(&self, from: &str, to: &str) {
         match self {
             Self::Fish => println!("alias {from}={to}"),
+            _ => todo!(),
         }
     }
 
     fn eval_output(&self, cmd: &str) {
         match self {
             Self::Fish => println!("{cmd} | source"),
+            _ => todo!(),
         }
     }
 }
 
+#[derive(Debug, PartialEq)]
 enum Target {
-    Alias(String),
-    EvalOutput { template: String, cache: bool },
+    Alias { name: String, args: Option<String> },
+    EvalOutput { arg_template: String, cache: bool },
     Code { shell: Shell, raw: String },
 }
 
@@ -55,11 +58,24 @@ struct Entry {
 
 impl Entry {
     fn codegen(&self, shell: &Shell) {
+        let exe = &self.executable;
         match &self.target {
-            Target::Alias(alias_target) => shell.alias(&self.executable, &alias_target),
-            Target::EvalOutput { template, cache } => {
-                let cmd = template.replace("{shell}", &shell.to_string());
-                shell.eval_output(&cmd)
+            Target::Alias { name, args } => {
+                let mut alias_target = exe.clone();
+
+                if let Some(args) = args {
+                    alias_target.push(' ');
+                    alias_target.push_str(args);
+                }
+
+                shell.alias(name, &alias_target);
+            }
+            Target::EvalOutput {
+                arg_template,
+                cache,
+            } => {
+                let args = arg_template.replace("{shell}", &shell.to_string());
+                shell.eval_output(&format!("{exe} {args}"))
             }
             Target::Code {
                 shell: target_shell,
