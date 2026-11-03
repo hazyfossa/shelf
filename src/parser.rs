@@ -5,43 +5,35 @@ use crate::{Entry, Shell, Target};
 
 pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Entry>, extra::Err<Rich<'a, char>>> {
     let ident = any()
-        .filter(|c: &char| c.is_alphanumeric() || *c == '_' || *c == '-')
+        .filter(|c: &char| c.is_alphanumeric() || matches!(*c, '_' | '-'))
         .repeated()
         .at_least(1)
         .to_slice()
-        .map(str::to_string)
-        .try_map(|s: String, span| {
-            if s == "is" || s == "eval" || s == "via" {
+        .try_map(|s: &str, span| {
+            if matches!(s, "is" | "eval" | "via") {
                 Err(Rich::custom(
                     span,
-                    format!("Unexpected keyword `{}` used as identifier", s),
+                    format!("Unexpected keyword `{s}` used as identifier"),
                 ))
             } else {
-                Ok(s)
+                Ok(s.to_string())
             }
         });
 
     let code_block = just('{')
         .ignore_then(recursive(|recurse| {
-            let string_literal = just('"')
-                .ignore_then(none_of('"').repeated())
-                .then_ignore(just('"'))
+            let string_literal = none_of('"')
+                .repeated()
+                .delimited_by(just('"'), just('"'))
                 .ignored();
 
-            let single_quote_literal = just('\'')
-                .ignore_then(none_of('\'').repeated())
-                .then_ignore(just('\''))
+            let single_quote_literal = none_of('\'')
+                .repeated()
+                .delimited_by(just('\''), just('\''))
                 .ignored();
 
-            // Allow nested braces by recursively parsing them
-            // TODO: the following repeats the logic around code_block
-            // extract is as bracket_pair helper
-            let nested_braces = just('{')
-                .ignore_then(recurse)
-                .then_ignore(just('}'))
-                .ignored();
+            let nested_braces = recurse.delimited_by(just('{'), just('}')).ignored();
 
-            // Anything else that isn't a brace or quote
             let other_chars = none_of("{}\"'").ignored();
 
             choice((
@@ -51,24 +43,17 @@ pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Entry>, extra::Err<Rich<'a, 
                 other_chars,
             ))
             .repeated()
+            .to_slice()
         }))
         .then_ignore(just('}'))
-        .to_slice()
-        .map(|x: &str| {
-            x.strip_prefix('{')
-                .unwrap()
-                .strip_suffix('}')
-                .unwrap()
-                .trim()
-                .to_string()
-        });
+        .map(|s: &str| s.trim().to_string());
 
-    let alias_target = text::keyword("is")
+    let alias_target = text::ascii::keyword("is")
         .padded()
         .ignore_then(ident.clone())
         .map(|name| Target::Alias { name, args: None });
 
-    let eval_target = text::keyword("eval")
+    let eval_target = text::ascii::keyword("eval")
         .padded()
         .ignore_then(code_block.clone())
         .map(|template| Target::EvalOutput {
@@ -76,7 +61,7 @@ pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Entry>, extra::Err<Rich<'a, 
             cache: false,
         });
 
-    let code_target = text::keyword("via")
+    let code_target = text::ascii::keyword("via")
         .padded()
         .ignore_then(ident.clone()) // shell name
         .padded()
@@ -126,11 +111,11 @@ mod tests {
         let input = "@ eza is ls";
         let result = parse(input);
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].executable, "ls");
+        assert_eq!(result[0].executable, "eza");
         assert_eq!(
             result[0].target,
             Target::Alias {
-                name: "list".to_string(),
+                name: "ls".to_string(),
                 args: None
             }
         );
