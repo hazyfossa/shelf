@@ -1,70 +1,95 @@
-use std::str::FromStr;
-
 use chumsky::prelude::*;
 use chumsky::text;
 
 use crate::{Entry, Shell, Target};
 
-pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Entry>> {
+pub fn parser<'a>() -> impl Parser<'a, &'a str, Vec<Entry>, extra::Err<Rich<'a, char>>> {
     let ws = text::whitespace().repeated();
 
     let ident = any()
-        .filter(|c: &char| c.is_alphanumeric())
+        .filter(|c: &char| c.is_alphanumeric() || *c == '_' || *c == '-')
         .repeated()
         .at_least(1)
         .to_slice()
-        .map(str::to_string);
+        .map(str::to_string)
+        .try_map(|s: String, span| {
+            if s == "is" || s == "eval" || s == "via" {
+                Err(Rich::custom(
+                    span,
+                    format!("Unexpected keyword `{}` used as identifier", s),
+                ))
+            } else {
+                Ok(s)
+            }
+        });
 
-    let code_block = any()
-        .filter(|c: &char| *c != '}')
-        .repeated()
+    let code_block = just('{')
+        .ignore_then(recursive(|code_block| {
+            let string_literal = just('"')
+                .ignore_then(none_of('"').repeated())
+                .then_ignore(just('"'))
+                .ignored();
+
+            let single_quote_literal = just('\'')
+                .ignore_then(none_of('\'').repeated())
+                .then_ignore(just('\''))
+                .ignored();
+
+            // Allow nested braces by recursively parsing them
+            let nested_braces = just('{')
+                .ignore_then(code_block.clone())
+                .then_ignore(just('}'));
+
+            // Anything else that isn't a brace or quote
+            let other_chars = none_of("{}\"'").ignored();
+
+            choice((
+                string_literal,
+                single_quote_literal,
+                nested_braces,
+                other_chars,
+            ))
+            .repeated()
+        }))
+        .then_ignore(just('}'))
         .to_slice()
         .map(str::to_string);
 
     let alias_target = text::keyword("is")
-        .ignore_then(ws.clone())
+        .padded()
         .ignore_then(ident.clone())
-        .map(|ident| Target::Alias(ident));
+        .map(Target::Alias);
 
     let eval_target = text::keyword("eval")
-        .ignore_then(just('{'))
-        .ignore_then(code_block)
-        .then_ignore(just('}'))
+        .padded()
+        .ignore_then(code_block.clone())
         .map(|template| Target::EvalOutput {
             template,
             cache: false, // TODO
         });
 
     let code_target = text::keyword("via")
-        .ignore_then(ws.clone())
-        .ignore_then(ident.clone()) // shell
-        .then_ignore(ws.clone())
-        .then_ignore(just('{'))
+        .padded()
+        .ignore_then(ident.clone()) // shell name
+        .padded()
         .then(code_block)
-        .then_ignore(just('}'))
-        .map(|(shell, raw)| {
-            let shell = shell.parse()?;
-            let ret = Target::Code { shell, raw };
-            Ok::<_, <Shell as FromStr>::Err>(ret)
-        })
-        .unwrapped();
+        .try_map(|(shell_str, raw), span| match shell_str.parse::<Shell>() {
+            Ok(shell) => Ok(Target::Code { shell, raw }),
+            Err(_) => Err(Rich::custom(
+                span,
+                format!("Unsupported shell: {shell_str}"),
+            )),
+        });
 
-    // Target: `is <alias>`  OR `eval { <command> }` OR  `via <shell> { <code> }`
-    let target = alias_target
-        .rewind()
-        .or(eval_target)
-        .rewind()
-        .or(code_target);
+    let target = choice((alias_target, eval_target, code_target));
 
-    // Entry: `@ <executable> <target>`
     let entry = just('@')
-        .ignore_then(ws.clone())
+        .padded()
         .ignore_then(ident)
-        .then_ignore(ws.clone())
+        .padded()
         .then(target)
         .map(|(executable, target)| Entry { executable, target });
 
-    ws.clone()
-        .ignore_then(entry.then_ignore(ws).repeated().collect())
+    ws.ignore_then(entry.padded().repeated().collect())
         .then_ignore(end())
 }

@@ -1,8 +1,13 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs::{self, File},
+    io::Read,
+    os::unix,
+    path::{Path, PathBuf},
+};
 
 use argh::FromArgs;
 use chumsky::Parser;
-use eyre::Result;
+use eyre::{Context, Result, eyre};
 use strum::{Display, EnumString};
 
 use crate::utils::{WarnExt, xdg_dir};
@@ -10,32 +15,29 @@ use crate::utils::{WarnExt, xdg_dir};
 mod parser;
 mod utils;
 
-type ShellCode = String;
 type Executable = String;
 
 #[derive(EnumString, Display, PartialEq)]
 #[strum(serialize_all = "lowercase")]
 enum Shell {
-    Bash,
-    Elvish,
+    // Bash,
+    // Elvish,
     Fish,
     // Nushell,
-    Xonsh,
-    Zsh,
+    // Xonsh,
+    // Zsh,
 }
 
 impl Shell {
-    fn alias(&self, from: &str, to: &str) -> ShellCode {
+    fn alias(&self, from: &str, to: &str) {
         match self {
-            Self::Fish => format!("alias {from}={to}"),
-            _ => panic!(),
+            Self::Fish => println!("alias {from}={to}"),
         }
     }
 
-    fn eval_output(&self, cmd: &str) -> ShellCode {
+    fn eval_output(&self, cmd: &str) {
         match self {
-            Self::Fish => format!("{cmd} | source"),
-            _ => panic!(),
+            Self::Fish => println!("{cmd} | source"),
         }
     }
 }
@@ -52,17 +54,23 @@ struct Entry {
 }
 
 impl Entry {
-    fn codegen(&self, shell: &Shell) -> Option<ShellCode> {
+    fn codegen(&self, shell: &Shell) {
         match &self.target {
-            Target::Alias(alias_target) => Some(shell.alias(&self.executable, &alias_target)),
+            Target::Alias(alias_target) => shell.alias(&self.executable, &alias_target),
             Target::EvalOutput { template, cache } => {
                 let cmd = template.replace("{shell}", &shell.to_string());
-                Some(shell.eval_output(&cmd))
+                shell.eval_output(&cmd)
             }
             Target::Code {
                 shell: target_shell,
                 raw,
-            } => (target_shell == shell).then_some(raw.to_string()),
+            } => {
+                // TODO: if an app was found, but no entry for it exists for a current shell
+                // it will be skipped silently, which might be confusing
+                if target_shell == shell {
+                    println!("{raw}");
+                }
+            }
         }
     }
 }
@@ -73,18 +81,20 @@ impl Entry {
 struct Args {
     /// path to config
     #[argh(option)] config: Option<PathBuf>,
-
-    /// disables interactivity guards, even if the shell supports them
-    #[argh(switch)] even_inside_scripts: bool,
 }
 
 fn load_config_dir(path: Option<PathBuf>) -> Result<impl Iterator<Item = Entry>> {
     let path = path.unwrap_or_else(|| xdg_dir("XDG_CONFIG", ".config").join("shelf.d"));
 
-    let entries = fs::read_dir(path)?
+    let entries = fs::read_dir(&path)
+        .with_context(|| format!("Failed to read config dir at {path:?}"))?
         .filter_map(|file_entry| {
             let path = file_entry.warn()?.path();
-            let content = fs::read_to_string(path).warn()?;
+
+            let content = fs::read_to_string(&path)
+                .with_context(|| format!("Failed to read: {path:?}"))
+                .warn()?;
+
             let new_entries = parser::parser().parse(&content).unwrap(); // TODO
             Some(new_entries)
         })
@@ -93,11 +103,26 @@ fn load_config_dir(path: Option<PathBuf>) -> Result<impl Iterator<Item = Entry>>
     Ok(entries)
 }
 
-fn current_shell() -> Result<Shell> {
-    todo!()
+fn read_file(path: impl AsRef<Path>) -> Result<String> {
+    let mut buf = String::new();
+    File::open(path)?.read_to_string(&mut buf)?;
+    Ok(buf)
 }
 
-fn executable_exists(name: &str) -> bool {
+fn current_shell() -> Result<Shell> {
+    let parent_pid = unix::process::parent_id();
+
+    let parent_name = read_file(format!("/proc/{parent_pid}/comm"))
+        .context("Failed to read /proc entry for parent")
+        .context("Shell detection failed")?;
+
+    parent_name
+        .trim()
+        .parse()
+        .map_err(|_| eyre!("Current shell ({parent_name}) is not supported"))
+}
+
+fn executable_exists(name: &Executable) -> bool {
     which::which(name).ok().is_some()
 }
 
@@ -109,9 +134,7 @@ fn main() -> Result<()> {
     let existing_apps = apps.filter(|entry| executable_exists(&entry.executable));
 
     for app in existing_apps {
-        if let Some(app_code) = app.codegen(&shell) {
-            println!("{app_code}");
-        }
+        app.codegen(&shell);
     }
 
     Ok(())
